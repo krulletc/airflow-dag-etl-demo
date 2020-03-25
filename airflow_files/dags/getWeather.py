@@ -1,6 +1,9 @@
 import requests
 import config as Config
 import json
+from airflow.hooks.postgres_hook import PostgresHook
+import json
+import numpy as np
 from datetime import datetime
 import os
 from airflow import DAG
@@ -11,7 +14,6 @@ API_URL = "https://api.darksky.net/forecast"
 API_Key = Config.API_KEY
 LAT = Config.LAT
 LONG = Config.LONG
-time = "255657600"
 
 
 def get_weather(**kwargs):
@@ -29,26 +31,77 @@ def get_weather(**kwargs):
 
     if result.status_code == 200:
 
-        json_data = result.json()
-        file_name = str(datetime.now().date()) + ".json"
-        tot_name = os.path.join(os.path.dirname(__file__), "data", file_name)
         print("success")
-        print(json_data)
+
+        json_data = result.json()
+        print(json.dumps(json_data, indent=4))
+
+        # file_name = str(datetime.now().date()) + ".json"
+        # tot_name = os.path.join(os.path.dirname(__file__), "data", file_name)
         # with open(tot_name, "w") as outputfile:
         #     json.dump(json_data, outputfile)
+
+        # Pass data to the next part via xcoms
+        kwargs["task_instance"].xcom_push(key="weather-data", value=json_data)
     else:
         print("Error in API call. 200 not received.")
 
 
+def load_data(**kwargs):
+    """
+    Processes json data, checks the types and enters into the Postgres database
+    """
+
+    # file_name = str(datetime.now().date()) + ".json"
+    # tot_name = os.path.join(os.path.dirname(__file__), "src/data", file_name)
+
+    # # open the json datafile and read it in
+    # with open(tot_name, "r") as inputfile:
+    #     doc = json.load(inputfile)
+
+    doc = kwargs["task_instance"].xcom_pull(
+        key="weather-data", task_ids="weather_extract"
+    )
+
+    # transform the data to the correct types and convert
+    latitude = float(doc["latitude"])
+    longitude = float(doc["longitude"])
+    date = str(doc["daily"]["data"][0]["time"])
+    summary = str(doc["daily"]["data"][0]["summary"])
+    max_temp = float(doc["daily"]["data"][0]["temperatureMax"]) * 1.8 + 32
+    min_temp = float(doc["daily"]["data"][0]["temperatureMin"]) * 1.8 + 32
+
+    # check for NaNs in the numeric values and then enter into the database
+    valid_data = True
+    for valid in np.isnan([latitude, longitude, max_temp, min_temp]):
+        if valid is False:
+            print("Invalid data found")
+            valid_data = False
+            break
+
+    row = (latitude, longitude, date, summary, max_temp, min_temp)
+    insert_cmd = """INSERT INTO weather_table
+                    (latitude, longitude, date, summary, max_temp, min_temp)
+                    VALUES
+                    (%s, %s, %s, %s, %s, %s);"""
+
+    if valid_data is True:
+        print("Loading weather data")
+        pg_hook = PostgresHook(postgres_conn_id="weather_id")
+        pg_hook.run(insert_cmd, parameters=row)
+
+
 with DAG(
     dag_id="weather_dag",
-    start_date=datetime(2020, 2, 25),
+    start_date=datetime(2020, 3, 2),
     schedule_interval="@daily",
     catchup=True,
 ) as dag:
-    start = DummyOperator(task_id="weather_start")
+    # start = DummyOperator(task_id="weather_start")
     extract = PythonOperator(
         task_id="weather_extract", python_callable=get_weather, provide_context=True
     )
-    start >> extract
-
+    transform_load = PythonOperator(
+        task_id="load_data", python_callable=load_data, provide_context=True
+    )
+    extract >> transform_load
