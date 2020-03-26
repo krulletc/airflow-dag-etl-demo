@@ -26,7 +26,8 @@ def make_database():
                         longitude: REAL,
                         date: Date,
                         summary: TEXT,
-                        temperature: REAL
+                        max_temp: REAL,
+                        min_temp: REAL
                     )
                     """
         % tablename
@@ -39,4 +40,3 @@ def make_database():
 
 if __name__ == "__main__":
     make_database()
-
