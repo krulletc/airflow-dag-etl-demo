@@ -66,7 +66,8 @@ def load_data(**kwargs):
     # transform the data to the correct types and convert
     latitude = float(doc["latitude"])
     longitude = float(doc["longitude"])
-    date = str(doc["daily"]["data"][0]["time"])
+    # date = str(doc["daily"]["data"][0]["time"])
+    date = datetime.fromtimestamp(doc["daily"]["data"][0]["time"]).strftime("%Y-%m-%d")
     summary = str(doc["daily"]["data"][0]["summary"])
     max_temp = float(doc["daily"]["data"][0]["temperatureMax"]) * 1.8 + 32
     min_temp = float(doc["daily"]["data"][0]["temperatureMin"]) * 1.8 + 32
@@ -93,7 +94,7 @@ def load_data(**kwargs):
 
 with DAG(
     dag_id="weather_dag",
-    start_date=datetime(2020, 3, 2),
+    start_date=datetime(2020, 3, 23),
     schedule_interval="@daily",
     catchup=True,
 ) as dag:
